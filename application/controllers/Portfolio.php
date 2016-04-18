@@ -18,6 +18,8 @@ class Portfolio extends Application {
 
         $this->load->model('transactions');
         $this->load->model('players');
+        $this->load->model('stocks');
+        $this->load->model('stocks_held');
         $this->load->library('form_validation');
     }
 
@@ -31,20 +33,50 @@ class Portfolio extends Application {
      */
     function index() {
 
-        //If there is no user logged in
+        //If there is no user logged in just picks a random profile from database
         if($this->session->userdata('user') == null) {
-            $this->data['pageTitle'] = 'Profile of Donald' ;
+            $user = $this->session->user;
+            $players = $this->players->all();
+            $randomNumber = rand(0, count($players) - 1);
+            $player = $players[$randomNumber];
+            $stocks_held = $this->stocks_held->get_player_stocks($player->Player);
+            $player_transactions = $this->transactions->get_player_transactions($player->Player);
+
+            $this->data['pageTitle'] = 'Profile of ' . $player->Player ;
             // this is the view we want shown
             $this->data['pagebody'] = 'profile';
 
             //Data to fill in dropdown menu
-            $this->data['player_names'] = $this->players->all();
+            $this->data['player_names'] = $players;
 
-            //Data to fill transactions table, Donald for now
-            $this->data['players'] = $this->transactions->some("Player", 'Donald');
+            //active stocks
+            $this->data['stocks']= $this->stocks->get_stocks();
 
-            //Player's current holdings in each stock, Donald for now
-            $this->data['stocks']= $this->transactions->get_player_stocks("Player", 'Donald');
+            $this->data['cash'] = $player->Cash;
+
+            $this->data['equity'] = $this->players->get_equity($player->UserId);
+
+            if($stocks_held == null) {
+                $this->data['stocks_held'] = array(array("stock" => '', "amount" => ''));
+
+            } else {
+                $this->data['stocks_held'] = $stocks_held;
+            }
+
+
+            if($player_transactions == null) {
+                $this->data['transactions'] = array(array
+                ("DateTime" => '', "Player" => '', 'Stock' => '', 'Trans' => '', 'Quantity' => ''));
+
+            } else {
+                $this->data['transactions'] = $player_transactions;
+            }
+
+            if ($player->Avatar != null) {
+                $this->data['player_avatar'] = "/data/avatars/" . $player->Avatar;
+            } else {
+                $this->data['player_avatar'] = "http://fanexpovancouver.com/wp-content/uploads/2013/12/550w_soaps_silhouettesm.jpg";
+            }
 
             $this->render();
         } else {
@@ -57,7 +89,12 @@ class Portfolio extends Application {
      * @param $player the name of the player
      */
     function one($player) {
+        $user = $this->session->user;
         $name = ucfirst($player);
+        $currentPlayer = $this->players->get_player($player);
+        $stocks_held = $this->stocks_held->get_player_stocks($player);
+        $player_transactions = $this->transactions->get_player_transactions($player);
+
         $this->data['pageTitle'] = 'Profile of ' . $name;
 
         // this is the view we want shown
@@ -66,11 +103,34 @@ class Portfolio extends Application {
         //Data to fill in dropdown menu
         $this->data['player_names'] = $this->players->all();
 
-        //Data to fill transactions table
-        $this->data['transactions'] = $this->transactions->get_player_transactions($player);
+        $this->data['equity'] = $this->players->get_equity($currentPlayer->UserId);
+
+        if($player_transactions == null) {
+            $this->data['transactions'] = array(array
+            ("DateTime" => '', "Player" => '', 'Stock' => '', 'Trans' => '', 'Quantity' => ''));
+
+        } else {
+            $this->data['transactions'] = $player_transactions;
+        }
+
+        //Active Stocks
+        $this->data['stocks']= $this->stocks->get_stocks();
+
+        //get current player
+        $this->data['cash'] = $currentPlayer->Cash;
 
         //Player's current holdings in each stock
-        $this->data['stocks']= $this->transactions->get_player_stocks("Player", $player);
+        if($stocks_held == null) {
+            $this->data['stocks_held'] = array(array("stock" => '', "amount" => ''));
+        } else {
+            $this->data['stocks_held'] = $stocks_held;
+        }
+
+        if ($currentPlayer->Avatar != null) {
+            $this->data['player_avatar'] = "/data/avatars/" . $currentPlayer->Avatar;
+        } else {
+            $this->data['player_avatar'] = "http://fanexpovancouver.com/wp-content/uploads/2013/12/550w_soaps_silhouettesm.jpg";
+        }
 
         $this->render();
     }
@@ -95,7 +155,7 @@ class Portfolio extends Application {
         $player = $this->players->get($userId);
         if ($player != null && password_verify($this->input->post('Password'), $player->Password)) {
             $this->session->set_userdata('user'
-                    , ["name"=>$player->Player, "avatar"=>$player->Avatar, "role"=>$player->UserRole]);
+                    , ["name"=>$player->Player, "avatar"=>$player->Avatar, "role"=>$player->UserRole, "userId"=>$userId]);
             redirect('/welcome');
         } else {
             $this->session->set_flashdata('message', 'Incorrect Username or Password.');
@@ -130,13 +190,13 @@ class Portfolio extends Application {
             $user['UserId'] = $this->input->post('UserId');
             $user['Player'] = $this->input->post('Player');
             $user['Password'] = password_hash($this->input->post('Password'), PASSWORD_DEFAULT);
-            $user['Cash'] = 0;
+            $user['Cash'] = 5000;
             $user['UserRole'] = 'user';
             if (!file_exists('./data/avatars')) {
                 mkdir('./data/avatars', 0777, true);
             }
             $config['upload_path'] = './data/avatars/';
-            $config['allowed_types'] = 'gif|jpg|png';
+            $config['allowed_types'] = 'gif|jpg|png|jpeg';
             $config['encrypt_name'] = true;
             $this->load->library('upload', $config);
             $this->upload->do_upload('Avatar');

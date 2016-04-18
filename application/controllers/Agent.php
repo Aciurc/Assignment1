@@ -1,5 +1,8 @@
 <?php
 
+//set timezone
+date_default_timezone_set("America/Vancouver");
+
 /**
  * This is the agent controller that is used to interact with the BSX server.
  * Class Agent
@@ -16,6 +19,7 @@ class Agent extends Application {
         $this->load->model('stocks');
         $this->load->model('transactions');
         $this->load->model('stocks_held');
+        $this->load->model('players');
         $this->load->library('bsx');
     }
 
@@ -63,9 +67,7 @@ class Agent extends Application {
         // Get the POST data
         $team      = $this->input->post('team');
         $name      = $this->input->post('name');
-        $frequency = $this->input->post('frequency');
-
-        $agent = array('id' => 1, 'team' => $team, 'name' => $name, 'frequency' => $frequency);
+        $agent = array('id' => 1, 'team' => $team, 'name' => $name);
 
         // If there is no agent, create it. Otherwise, update the existing one. (There's only ever one agent).
         if ($this->agents->get(1) == null) {
@@ -81,17 +83,17 @@ class Agent extends Application {
      * Both buy and sell stock from the BSX. The specific action is determined by which submit button what pressed.
      */
     function exchange() {
+        $date = date('Y-m-d H:i:s');
         // If the user is not logged in, redirect to home
         if ($this->session->userdata('user') == null) {
             redirect('/');
         }
-
         // buy is true if BUY button was pressed, else it's false and we are SELLING
         $buy      = isset($_POST['buy']);
         $stock    = $this->input->post('stock');
         $quantity = $this->input->post('quantity');
         $player   = $this->session->userdata('user')['name'];
-
+        $stockValue = $this->input->post('value');
         // This both registers the agent and makes sure the game is open
         if ($this->bsx->register_agent()) {
             if ($this->bsx->get_status()->state != 3) {
@@ -112,14 +114,19 @@ class Agent extends Application {
                         $this->stocks_held->add($response);
 
                         // need to also add to transaction history
-                        $data = array('DateTime' => date(), 'Player' => $player, 'Stock' => $stock, 'Quantity' => $quantity, 'Trans' => 'buy');
+                        $data = array('DateTime' => $date, 'Player' => $player, 'Stock' => $stock, 'Quantity' => $quantity, 'Trans' => 'buy');
                         $this->transactions->add($data);
+
+                        //deduct cash from player
+                        $currentPlayer = $this->players->get($this->session->userdata('user')['userId']);
+                        $currentPlayer->Cash = $currentPlayer->Cash - ($quantity * $stockValue);
+                        $this->players->update($currentPlayer);
 
                         $this->session->set_flashdata('success', 'Stock purchased successfully.');
                     }
                 } else {
                     // The server is broken (AGAIN). Just give an innocent error message
-                    $this->session->set_flashdata('message', 'Something went wrong.');
+                    $this->session->set_flashdata('message', 'Something went wrong. The server is probably broken.');
                 }
             } else {
                 // Selling stocks
@@ -127,19 +134,37 @@ class Agent extends Application {
 
                 if ($certificates) {
                     $response = $this->bsx->sell_stock($agent->team, $player, $stock, $quantity, $agent->token, $certificates);
+                    if (is_array($response)) {
 
-                    var_dump($response);
-                    die();
+                        //add cash to player
+                        $currentPlayer = $this->players->get($this->session->userdata('user')['userId']);
+                        $currentPlayer->Cash = $currentPlayer->Cash + ($quantity * $stockValue);
+                        $this->players->update($currentPlayer);
 
-                    // need to also add to transaction history
-                    //$data = array('DateTime' => date(), 'Player' => $player, 'Stock' => $stock, 'Quantity' => $quantity, 'Trans' => 'buy');
-                    //$this->transactions->add($data);
 
-                    $this->session->set_flashdata('success', 'Stock sold successfully.');
+                        if (array_key_exists('message', $response)) {
+                            // We sold all of the stocks for this code, just delete from the database
+                            $this->stocks_held->delete_certificates($agent->team, $player, $stock);
+
+                            $this->session->set_flashdata('success', $response['message']);
+                        } else {
+                            // update the stocks_held
+                            $this->stocks_held->update_certificates($agent->team, $player, $stock, $response['amount'], $response['token']);
+
+                            // need to also add to transaction history
+                            $data = array('DateTime' => $date, 'Player' => $player, 'Stock' => $stock, 'Quantity' => $quantity, 'Trans' => 'sell');
+                            $this->transactions->add($data);
+
+                            $this->session->set_flashdata('success', 'Stock sold successfully.');
+                        }
+                    } else {
+                        // The server is broken (AGAIN). Just give an innocent error message
+                        $this->session->set_flashdata('message', 'Something went wrong. The server is probably broken.');
+                    }
                 }
             }
         }
 
-        redirect('/profile');
+        redirect('/game');
     }
 }
